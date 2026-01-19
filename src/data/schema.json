@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "艺术主义数据结构规则",
+  "description": "定义艺术主义数据的结构和验证规则",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["id", "name", "nameEn", "period", "year", "field", "ontology", "phenomenon", "form"],
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "艺术主义的唯一标识符，使用英文小写，多个单词用下划线连接",
+        "pattern": "^[a-z][a-z0-9_]*$",
+        "examples": ["renaissance", "baroque", "post_impressionism"]
+      },
+      "name": {
+        "type": "string",
+        "description": "艺术主义的中文名称",
+        "minLength": 2,
+        "maxLength": 20
+      },
+      "nameEn": {
+        "type": "string",
+        "description": "艺术主义的英文名称，首字母大写，多个单词用空格分隔",
+        "pattern": "^[A-Z][a-zA-Z ]*$",
+        "examples": ["Renaissance", "Post-Impressionism", "De Stijl"]
+      },
+      "period": {
+        "type": "string",
+        "description": "艺术主义的时期描述，使用中文",
+        "minLength": 3,
+        "maxLength": 50,
+        "examples": ["14-16世纪", "20世纪初", "20世纪40-50年代"]
+      },
+      "year": {
+        "type": "integer",
+        "description": "艺术主义的起始年份，用于排序和分类",
+        "minimum": 1000,
+        "maximum": 2100
+      },
+      "field": {
+        "type": "string",
+        "description": "场域描述：艺术活动的主要地域、历史背景和文化环境（200字以内）",
+        "minLength": 10,
+        "maxLength": 200
+      },
+      "ontology": {
+        "type": "string",
+        "description": "本体描述：艺术运动的核心理念、哲学基础和艺术观念（200字以内）",
+        "minLength": 10,
+        "maxLength": 200
+      },
+      "phenomenon": {
+        "type": "string",
+        "description": "现象描述：艺术运动的主要表现形式、作品主题和艺术特征（200字以内）",
+        "minLength": 10,
+        "maxLength": 200
+      },
+      "form": {
+        "type": "string",
+        "description": "形式描述：艺术作品的风格特征、技术手法和视觉表现（200字以内）",
+        "minLength": 10,
+        "maxLength": 200
+      }
+    },
+    "additionalProperties": false
+  }
+}
+

@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>压缩GLB文件测试</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+        canvas {
+            width: 100% !important;
+            height: 100% !important;
+            display: block !important;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 100;
+            max-width: 400px;
+        }
+        #loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 10px;
+            font-size: 16px;
+            z-index: 1000;
+        }
+        .success { color: #4CAF50; }
+        .error { color: #f44336; }
+        .warning { color: #ff9800; }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h3>🧪 压缩GLB文件加载测试</h3>
+        <div id="status">正在初始化...</div>
+    </div>
+
+    <div id="loading">正在加载压缩GLB文件...</div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "./three.js-dev/build/three.module.js",
+            "three/addons/": "./three.js-dev/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        let camera, scene, renderer, controls;
+        let statusDiv, loadingDiv;
+
+        init();
+        animate();
+
+        function init() {
+            statusDiv = document.getElementById('status');
+            loadingDiv = document.getElementById('loading');
+
+            // 创建场景
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x111111);
+
+            // 创建相机
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(3, 2, 5);
+            camera.lookAt(0, 0, 0);
+
+            // 创建渲染器
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            document.body.appendChild(renderer.domElement);
+
+            // 创建控制器
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            // 添加灯光
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+            directionalLight.position.set(5, 10, 5);
+            directionalLight.castShadow = true;
+            scene.add(directionalLight);
+
+            // 开始测试加载压缩GLB文件
+            testCompressedGLBLoading();
+        }
+
+        async function testCompressedGLBLoading() {
+            statusDiv.innerHTML = '🔄 正在配置GLTFLoader...<br>';
+
+            // 配置GLTFLoader支持Meshopt压缩
+            const loader = new GLTFLoader();
+            loader.setMeshoptDecoder(MeshoptDecoder);
+
+            statusDiv.innerHTML += '✅ MeshoptDecoder已配置<br>';
+            statusDiv.innerHTML += '🔄 开始加载压缩GLB文件...<br><br>';
+
+            // 测试文件列表
+            const testFiles = [
+                'models/bird_components/belly/belly (2).glb',
+                'models/bird_components/chest/chest (1).glb'
+            ];
+
+            for (const filePath of testFiles) {
+                try {
+                    statusDiv.innerHTML += `📦 加载: ${filePath}<br>`;
+
+                    const gltf = await loader.loadAsync(filePath);
+                    const model = gltf.scene;
+
+                    // 预处理模型
+                    model.traverse((child) => {
+                        if (child.isMesh) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                        }
+                    });
+
+                    // 居中模型
+                    const box = new THREE.Box3().setFromObject(model);
+                    const center = box.getCenter(new THREE.Vector3());
+                    model.position.sub(center);
+
+                    // 随机位置
+                    model.position.x = (Math.random() - 0.5) * 4;
+                    model.position.z = (Math.random() - 0.5) * 4;
+                    model.position.y = Math.random() * 2;
+
+                    scene.add(model);
+
+                    statusDiv.innerHTML += `✅ <span class="success">成功加载: ${filePath}</span><br>`;
+
+                } catch (error) {
+                    statusDiv.innerHTML += `❌ <span class="error">加载失败: ${filePath}</span><br>`;
+                    statusDiv.innerHTML += `<span class="error">错误: ${error.message}</span><br>`;
+                    console.error(`加载失败 ${filePath}:`, error);
+                }
+            }
+
+            // 隐藏加载提示
+            loadingDiv.style.display = 'none';
+
+            statusDiv.innerHTML += '<br>🎉 测试完成！<br>';
+            statusDiv.innerHTML += '💡 如果看到模型正常显示，则压缩文件加载成功！';
+
+            // 添加地面
+            const groundGeometry = new THREE.PlaneGeometry(20, 20);
+            const groundMaterial = new THREE.MeshStandardMaterial({
+                color: 0x333333,
+                roughness: 0.8,
+                metalness: 0.0
+            });
+            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            render();
+        }
+
+        function render() {
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        window.addEventListener('resize', onWindowResize);
+    </script>
+</body>
+</html>

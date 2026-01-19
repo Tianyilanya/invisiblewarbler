@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.idea/
+.vscode/
+*.log
+three.js-dev/
+*.tmp
+.DS_Store
+.env
+.env.local

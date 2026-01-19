@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Three.js 雾中交错树枝场景</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background: #cccccc; }
+        #container { width: 100vw; height: 100vh; }
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #666;
+            font-family: Arial, sans-serif;
+            font-size: 18px;
+        }
+        .error {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ff4444;
+            font-family: Arial, sans-serif;
+            font-size: 16px;
+            text-align: center;
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 10px;
+        }
+    </style>
+    <!-- Three.js WebGL CDN -->
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+    </script>
+<body>
+    <div id="container"></div>
+    <div class="loading" id="loading">初始化中...</div>
+
+    <script type="module">
+        // 导入标准 Three.js 模块 (WebGL兼容)
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+        import * as CopyShader from 'three/addons/shaders/CopyShader.js';
+
+        console.log('Three.js version:', THREE.REVISION);
+
+        // ===================== 全局变量 =====================
+        let camera, scene, controls, renderer, composer, fogPass;
+        const container = document.getElementById('container');
+        const loading = document.getElementById('loading');
+
+        // ===================== 初始化核心组件 =====================
+        function initCore() {
+            try {
+                console.log('Initializing core components with WebGL...');
+
+                camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 200);
+                camera.position.set(3, 2, 5);
+
+                scene = new THREE.Scene();
+                scene.background = new THREE.Color(0xf8f8f8); // 淡灰背景，配合雾气
+
+                // WebGL 渲染器
+                renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.setClearColor(0xddddff);
+                renderer.outputColorSpace = THREE.SRGBColorSpace;
+                renderer.shadowMap.enabled = true;
+                renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                container.appendChild(renderer.domElement);
+
+                window.addEventListener('resize', onWindowResize);
+
+                // 轨道控制器
+                controls = new OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.dampingFactor = 0.05;
+                controls.minDistance = 5;
+                controls.maxDistance = 50;
+                controls.maxPolarAngle = Math.PI * 0.8;
+
+                // 初始化后处理（灰白色雾气效果）
+                initPostProcessing();
+
+                console.log('WebGL system initialized with custom fog post-processing');
+            } catch (error) {
+                console.error('WebGL initialization failed:', error);
+                showError('WebGL 初始化失败: ' + error.message);
+            }
+        }
+
+        // ===================== 光照系统 =====================
+        function initLight() {
+            console.log('Initializing lighting...');
+
+            // 环境光：柔和补光，避免过暗
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.0); // 提高亮度
+            scene.add(ambientLight);
+
+            // 半球光：模拟地面/天空的反射光，增强层次感
+            const hemisphereLight = new THREE.HemisphereLight(0xeeeeff, 0x444422, 0.4);
+            hemisphereLight.position.set(0, 20, 0);
+            scene.add(hemisphereLight);
+
+            // 点光：模拟雾中散射光点，多光源增强真实感
+            const pointLight1 = new THREE.PointLight(0xffffff, 1.0, 80); // 提高亮度
+            pointLight1.position.set(10, 15, 8);
+            scene.add(pointLight1);
+
+            const pointLight2 = new THREE.PointLight(0xffffff, 0.8, 60); // 提高亮度
+            pointLight2.position.set(-8, 12, -10);
+            scene.add(pointLight2);
+
+            console.log('Lighting initialized');
+        }
+
+
+
+
+
+
+
+        // ===================== 创建噪波地面材质 =====================
+        function createNoiseGround() {
+            console.log('Creating noise-based ground with irregular displacement...');
+
+            // 创建大的地面几何体
+            const geometry = new THREE.PlaneGeometry(60, 60, 256, 256);
+            geometry.rotateX(-Math.PI / 2); // 水平放置
+
+            // 自定义着色器材质，实现静态随机噪波起伏
+            const material = new THREE.ShaderMaterial({
+                uniforms: {
+                    amplitude: { value: 3.0 }  // 起伏幅度
+                },
+                vertexShader: `
+                    uniform float amplitude;
+
+                    // 简化的噪声函数 - 基于位置生成静态随机值
+                    float hash(vec2 p) {
+                        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+                    }
+
+                    float noise(vec2 p) {
+                        vec2 i = floor(p);
+                        vec2 f = fract(p);
+                        f = f * f * (3.0 - 2.0 * f);
+
+                        float a = hash(i);
+                        float b = hash(i + vec2(1.0, 0.0));
+                        float c = hash(i + vec2(0.0, 1.0));
+                        float d = hash(i + vec2(1.0, 1.0));
+
+                        return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+                    }
+
+                    // 多层噪声叠加
+                    float fbm(vec2 p) {
+                        float value = 0.0;
+                        float amplitude = 1.0;
+                        float frequency = 0.01;
+
+                        for(int i = 0; i < 5; i++) {
+                            value += amplitude * noise(p * frequency);
+                            amplitude *= 0.5;
+                            frequency *= 2.0;
+                        }
+
+                        return value;
+                    }
+
+                    void main() {
+                        vec3 pos = position;
+
+                        // 生成静态随机噪波起伏
+                        float noiseValue = fbm(pos.xz);
+                        float displacement = (noiseValue - 0.5) * amplitude;
+
+                        // 应用位移
+                        pos.y += displacement;
+
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    void main() {
+                        // 半透明浅灰色地面
+                        vec3 color = vec3(0.7, 0.7, 0.7);
+                        gl_FragColor = vec4(color, 0.3);
+                    }
+                `,
+                side: THREE.DoubleSide
+            });
+
+            const ground = new THREE.Mesh(geometry, material);
+            ground.position.y = -2; // 稍微下沉
+            ground.receiveShadow = true;
+
+            // 添加到场景
+            scene.add(ground);
+
+            // 存储材质引用用于动画更新
+            ground.userData.material = material;
+
+            console.log('Noise-based ground created with fractal displacement');
+
+            return ground;
+        }
+
+
+        // ===================== 创建黑色随机扭曲曲线 =====================
+        function createBlackSpiralCurve() {
+            console.log('Creating 90 slightly spaced black curves...');
+
+            const totalCurves = 90;
+            const maxRadius = 25; // 圆形区域的最大半径
+
+            for (let curveIndex = 0; curveIndex < totalCurves; curveIndex++) {
+                // 创建分段管状几何体 - 越向上越细
+                const segments = 10; // 分成10段，更平滑的渐变
+                const group = new THREE.Group();
+
+                // 在圆形区域内随机分布
+                const randomAngle = Math.random() * Math.PI * 2; // 随机角度 0-360°
+                const randomRadius = Math.random() * maxRadius; // 随机半径 0-maxRadius
+                const xOffset = Math.cos(randomAngle) * randomRadius;
+                const zOffset = Math.sin(randomAngle) * randomRadius;
+
+                // 创建该根曲线的路径点
+                const points = [];
+                const height = 15; // 总高度
+                const baseAmplitude = 0.3; // 进一步减小振幅，几乎垂直向上
+
+                // 生成轻微随机偏折的路径
+                for (let i = 0; i <= 200; i++) {
+                    const t = i / 200; // 归一化参数 0-1
+                    const y = -2 + t * height; // 从地面(y=-2)开始向上生长到底部贴地
+
+                    // 极轻微的随机偏折 - 最小化横向偏移
+                    const randomX = Math.sin(t * Math.PI + Math.random() * Math.PI * 0.5) * baseAmplitude;
+                    const randomZ = Math.cos(t * Math.PI * 1.3 + Math.random() * Math.PI * 0.5) * baseAmplitude;
+
+                    // 几乎不添加额外噪声，保持最小偏折
+                    const x = (randomX * 0.95) + xOffset;
+                    const z = (randomZ * 0.95) + zOffset;
+
+                    points.push(new THREE.Vector3(x, y, z));
+                }
+
+                // 创建平滑曲线
+                const curve = new THREE.CatmullRomCurve3(points);
+
+                for (let i = 0; i < segments; i++) {
+                const t1 = i / segments;
+                const t2 = (i + 1) / segments;
+
+                // 获取曲线段的起点和终点
+                const point1 = curve.getPointAt(t1);
+                const point2 = curve.getPointAt(t2);
+
+                // 计算该段的半径（越向上越细，从0.12渐变到0.03）
+                const baseRadius = 0.12;
+                const minRadius = 0.03;
+                const radius = baseRadius - (baseRadius - minRadius) * (i / segments);
+
+                // 创建短线段
+                const segmentPoints = [point1, point2];
+                const segmentCurve = new THREE.CatmullRomCurve3(segmentPoints);
+                const segmentGeometry = new THREE.TubeGeometry(segmentCurve, 2, radius, 8, false);
+
+                const material = new THREE.MeshBasicMaterial({
+                    color: 0x000000,
+                    transparent: true,
+                    opacity: 0.8
+                });
+
+                    const segment = new THREE.Mesh(segmentGeometry, material);
+                    group.add(segment);
+                }
+
+                scene.add(group);
+            }
+
+
+
+            console.log('90 slightly spaced black curves created');
+        }
+
+        // ===================== 创建扭曲抖动线条 =====================
+        function createTwistingJitterLine() {
+            console.log('Creating 40 smooth twisting jitter thick lines on ground...');
+
+            const totalLines = 40; // 生成40条线条
+            const maxRadius = 25; // 分布区域的最大半径
+
+            for (let lineIndex = 0; lineIndex < totalLines; lineIndex++) {
+                const lineGroup = new THREE.Group();
+                const numPoints = 200; // 总点数，增加以获得更平滑的曲线
+                const lineRadius = 0.3; // 线条半径（粗细）- 粗线条
+                const overlapPoints = 3; // 重叠点数，确保分段连接平滑
+
+                // 在圆形区域内随机分布线条位置
+                const randomAngle = Math.random() * Math.PI * 2; // 随机角度 0-360°
+                const randomRadius = Math.random() * maxRadius; // 随机半径 0-maxRadius
+                const xOffset = Math.cos(randomAngle) * randomRadius;
+                const zOffset = Math.sin(randomAngle) * randomRadius;
+
+                // 生成扭曲抖动的路径点
+                const points = [];
+                for (let i = 0; i <= numPoints; i++) {
+                    const t = i / numPoints; // 0到1的参数
+                    const x = (t - 0.5) * 60 + xOffset; // 水平方向从-30到30 - 长度增加一倍
+
+                    // 创建柔和的抖动和扭曲效果 - 降低幅度避免纠缠
+                    const baseWave = Math.sin(t * Math.PI * 4) * 1.5; // 基础波形 - 幅度减半
+                    const jitter1 = Math.sin(t * Math.PI * 12 + Math.random() * Math.PI * 2) * 0.3; // 高频抖动 - 幅度降低
+                    const jitter2 = Math.cos(t * Math.PI * 8 + Math.random() * Math.PI * 2) * 0.2; // 中频抖动 - 幅度降低
+                    const twist = Math.sin(t * Math.PI * 6) * Math.cos(t * Math.PI * 3) * 0.5; // 扭曲效果 - 幅度降低
+
+                    const y = baseWave + jitter1 + jitter2 + twist;
+
+                    // Z方向的抖动 - 同样降低幅度
+                    const zJitter1 = Math.sin(t * Math.PI * 10 + Math.random() * Math.PI * 2) * 0.25;
+                    const zJitter2 = Math.cos(t * Math.PI * 14 + Math.random() * Math.PI * 2) * 0.15;
+                    const zTwist = Math.cos(t * Math.PI * 5) * Math.sin(t * Math.PI * 7) * 0.4;
+
+                    const z = zJitter1 + zJitter2 + zTwist + zOffset;
+
+                    points.push(new THREE.Vector3(x, y, z));
+                }
+
+                // 创建连续的管状分段，使用重叠点确保平滑连接
+                const segmentSize = 20; // 每个分段包含的点数
+                for (let i = 0; i < points.length - segmentSize; i += segmentSize - overlapPoints) {
+                    // 提取当前分段的点
+                    const segmentPoints = [];
+                    const endIndex = Math.min(i + segmentSize, points.length);
+                    for (let j = i; j < endIndex; j++) {
+                        segmentPoints.push(points[j]);
+                    }
+
+                    // 至少需要2个点才能创建曲线
+                    if (segmentPoints.length >= 2) {
+                        const curve = new THREE.CatmullRomCurve3(segmentPoints);
+
+                        // 创建管状几何体，增加tubularSegments以获得更平滑的表面
+                        const radius = lineRadius;
+                        const geometry = new THREE.TubeGeometry(curve, segmentPoints.length * 2, radius, 12, false);
+
+                        // 创建黑色材质
+                        const material = new THREE.MeshBasicMaterial({
+                            color: 0x000000, // 黑色
+                            transparent: true,
+                            opacity: 0.9
+                        });
+
+                        const tube = new THREE.Mesh(geometry, material);
+                        lineGroup.add(tube);
+                    }
+                }
+
+                // 设置线条位置 - 放在地面水平面位置
+                lineGroup.position.set(0, -2, 0); // 地面位置
+
+                // 添加到场景
+                scene.add(lineGroup);
+            }
+
+            console.log('40 smooth twisting jitter thick black lines created on ground');
+
+            return;
+        }
+
+
+
+        // ===================== 初始化后处理（灰白色雾气）=====================
+        function initPostProcessing() {
+            console.log('Initializing custom fog post-processing...');
+
+            // 创建后处理合成器
+            composer = new EffectComposer(renderer);
+
+            // 添加场景渲染通道
+            const renderPass = new RenderPass(scene, camera);
+            composer.addPass(renderPass);
+
+            // 创建自定义雾气着色器（参考 webgpu_custom_fog_background）
+            const fogShader = {
+                uniforms: {
+                    tDiffuse: { value: null },
+                    fogColor: { value: new THREE.Color(0xf5f5f5) }, // 更柔和的灰白色雾气
+                    fogNear: { value: 3.0 }, // 雾气起始距离
+                    fogFar: { value: 12.0 }  // 雾气结束距离
+                },
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform sampler2D tDiffuse;
+                    uniform vec3 fogColor;
+                    uniform float fogNear;
+                    uniform float fogFar;
+                    varying vec2 vUv;
+
+                    void main() {
+                        vec4 texColor = texture2D(tDiffuse, vUv);
+
+                        // 计算线性深度（参考 webgpu_custom_fog_background 的 rangeFogFactor）
+                        float depth = gl_FragCoord.z / gl_FragCoord.w;
+
+                        // 将深度转换为线性雾气因子
+                        // fogNear 到 fogFar 范围内的线性过渡
+                        float fogFactor = clamp((depth - fogNear) / (fogFar - fogNear), 0.0, 1.0);
+
+                        // 使用 smoothstep 创建更平滑的过渡
+                        fogFactor = smoothstep(0.0, 1.0, fogFactor);
+
+                        // 混合场景颜色和雾气颜色
+                        gl_FragColor = mix(texColor, vec4(fogColor, texColor.a), fogFactor);
+                    }
+                `
+            };
+
+            // 创建雾气后处理通道
+            fogPass = new ShaderPass(fogShader);
+            composer.addPass(fogPass);
+
+            console.log('Custom fog post-processing initialized');
+        }
+
+        // ===================== 显示错误信息 =====================
+        function showError(message) {
+            loading.className = 'error';
+            loading.innerHTML = message;
+            }
+
+
+        // ===================== 窗口自适应 =====================
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            if (composer) {
+                composer.setSize(window.innerWidth, window.innerHeight);
+            }
+        }
+
+        // ===================== 动画循环 =====================
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 更新控制器
+            if (controls) {
+                controls.update();
+            }
+
+            // 更新地面材质的时间uniform，实现动态噪波
+            scene.traverse((child) => {
+                if (child.userData.material && child.userData.material.uniforms.time) {
+                    child.userData.material.uniforms.time.value += 0.016; // 约60fps
+                }
+            });
+
+            // 使用后处理渲染（包含雾气效果）
+            if (composer) {
+                composer.render();
+            } else {
+                renderer.render(scene, camera);
+            }
+        }
+
+
+        // ===================== 初始化入口 =====================
+        async function init() {
+            try {
+                console.log('Starting initialization...');
+
+                loading.textContent = '初始化核心组件...';
+                initCore();
+
+                loading.textContent = '设置光照...';
+                initLight();
+
+
+
+                loading.textContent = '创建雾气效果...';
+                // 使用简单的指数雾气而不是复杂的深度雾气
+                scene.fog = new THREE.FogExp2(0xddddff, 0.005); // 恢复简单雾气
+
+                loading.textContent = '生成噪波地面材质...';
+                const ground = createNoiseGround();
+
+                loading.textContent = '生成黑色螺旋曲线...';
+                createBlackSpiralCurve();
+
+                loading.textContent = '生成扭曲抖动线条...';
+                createTwistingJitterLine();
+
+            
+
+
+                // 监听窗口大小变化
+                window.addEventListener('resize', onWindowResize);
+
+                // 隐藏加载提示
+                loading.style.display = 'none';
+
+                console.log('Initialization complete, starting animation...');
+
+                // 启动动画
+                animate();
+
+            } catch (error) {
+                console.error('初始化失败：', error);
+                showError('初始化失败: ' + error.message + '<br>请刷新页面重试');
+            }
+        }
+
+        // 启动程序
+        init();
+</script>
+</body>
+</html>

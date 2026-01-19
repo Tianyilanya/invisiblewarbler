@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Three.js 雾中交错树枝场景</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background: #cccccc; }
+        #container { width: 100vw; height: 100vh; }
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #666;
+            font-family: Arial, sans-serif;
+            font-size: 18px;
+        }
+        .error {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ff4444;
+            font-family: Arial, sans-serif;
+            font-size: 16px;
+            text-align: center;
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 10px;
+        }
+    </style>
+    <!-- Three.js WebGL CDN -->
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+    </script>
+<body>
+    <div id="container"></div>
+    <div class="loading" id="loading">初始化中...</div>
+
+    <script type="module">
+        // 导入标准 Three.js 模块 (WebGL兼容)
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+        import * as CopyShader from 'three/addons/shaders/CopyShader.js';
+
+        console.log('Three.js version:', THREE.REVISION);
+
+        // ===================== 全局变量 =====================
+        let camera, scene, controls, renderer, composer, fogPass;
+        const container = document.getElementById('container');
+        const loading = document.getElementById('loading');
+
+        // ===================== 初始化核心组件 =====================
+        function initCore() {
+            try {
+                console.log('Initializing core components with WebGL...');
+
+                camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 200);
+                camera.position.set(3, 2, 5);
+
+            scene = new THREE.Scene();
+                scene.background = new THREE.Color(0xf8f8f8); // 淡灰背景，配合雾气
+
+                // WebGL 渲染器
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.setClearColor(0xddddff);
+                renderer.outputColorSpace = THREE.SRGBColorSpace;
+                renderer.shadowMap.enabled = true;
+                renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                container.appendChild(renderer.domElement);
+
+                window.addEventListener('resize', onWindowResize);
+
+                // 轨道控制器
+                controls = new OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.dampingFactor = 0.05;
+                controls.minDistance = 5;
+                controls.maxDistance = 50;
+                controls.maxPolarAngle = Math.PI * 0.8;
+
+                // 初始化后处理（灰白色雾气效果）
+                initPostProcessing();
+
+                console.log('WebGL system initialized with custom fog post-processing');
+            } catch (error) {
+                console.error('WebGL initialization failed:', error);
+                showError('WebGL 初始化失败: ' + error.message);
+            }
+        }
+
+        // ===================== 光照系统 =====================
+        function initLight() {
+            console.log('Initializing lighting...');
+
+            // 环境光：柔和补光，避免过暗
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.0); // 提高亮度
+            scene.add(ambientLight);
+
+            // 半球光：模拟地面/天空的反射光，增强层次感
+            const hemisphereLight = new THREE.HemisphereLight(0xeeeeff, 0x444422, 0.4);
+            hemisphereLight.position.set(0, 20, 0);
+            scene.add(hemisphereLight);
+
+            // 点光：模拟雾中散射光点，多光源增强真实感
+            const pointLight1 = new THREE.PointLight(0xffffff, 1.0, 80); // 提高亮度
+            pointLight1.position.set(10, 15, 8);
+            scene.add(pointLight1);
+
+            const pointLight2 = new THREE.PointLight(0xffffff, 0.8, 60); // 提高亮度
+            pointLight2.position.set(-8, 12, -10);
+            scene.add(pointLight2);
+
+            console.log('Lighting initialized');
+        }
+
+
+        // ===================== 生成多变静态扭曲树枝 =====================
+        function createStaticTwistedBranch(seed = Math.random(), lengthMultiplier = 1) {
+            console.log('Creating varied static twisted branch...');
+
+            // 种子随机函数，确保可重现的结果
+            const random = (min, max) => {
+                const x = Math.sin(seed * 10000 + min * 1000) * 10000;
+                return min + (max - min) * (x - Math.floor(x));
+            };
+
+            // 随机化基本参数（保持合理范围）
+            const baseLength = 4.5 + random(0, 2); // 基础长度4.5-6.5单位
+            const length = baseLength * lengthMultiplier; // 应用长度倍数
+            const curveAmount = random(0.3, 0.8); // 曲线程度
+            const endX = random(-0.8, 0.8) * length * curveAmount; // 结束X位置
+            const endZ = -length * (0.7 + random(0, 0.6)); // 结束Z位置
+
+            const start = new THREE.Vector3(0, 0, 0);
+            const end = new THREE.Vector3(endX, length, endZ);
+
+            // 计算树枝长度和方向
+            const direction = new THREE.Vector3().subVectors(end, start);
+            const actualLength = direction.length();
+            const segments = 7 + Math.floor(random(0, 4)); // 段数7-10
+            const twistStrength = 0.5 + random(0, 0.6); // 扭曲强度0.5-1.1
+            const baseRadius = 0.1 + random(0, 0.06); // 基础半径0.1-0.16
+
+            // 创建扭曲的圆柱体几何体
+            const geometry = new THREE.CylinderGeometry(
+                baseRadius * (0.7 + random(0, 0.3)), // 顶部半径变化
+                baseRadius * (1.0 + random(0, 0.4)), // 底部半径变化
+                actualLength, 8, segments, false
+            );
+
+            // 应用半径变化和节瘤效果
+            applyRadiusVariations(geometry, segments, random);
+
+            // 手动调整顶点位置以创建扭曲和肿瘤效果
+            applyVertexDeformations(geometry, segments, twistStrength, random);
+
+            // 添加表面噪声
+            addSurfaceNoise(geometry, random);
+
+            // 创建颜色变化不大的材质
+            const material = createVariedBarkMaterial(random);
+
+            const branch = new THREE.Mesh(geometry, material);
+
+            // 定位到中点并朝向末端
+            const midPoint = new THREE.Vector3().lerpVectors(start, end, 0.5);
+            branch.position.copy(midPoint);
+            branch.lookAt(end);
+            branch.rotateX(Math.PI / 2);
+
+            scene.add(branch);
+
+            // 添加不规则小分支
+            addIrregularBranches(branch, start, end, segments, random);
+
+            console.log('Varied static twisted branch created');
+            return branch;
+        }
+
+        // ===================== 应用半径变化和节瘤 =====================
+        function applyRadiusVariations(geometry, segments, random) {
+            const positions = geometry.attributes.position.array;
+            const radialSegments = geometry.parameters.radialSegments;
+
+            for (let segmentIndex = 0; segmentIndex <= segments; segmentIndex++) {
+                const t = segmentIndex / segments;
+
+                // 基础半径变化 - 模拟树枝的自然粗细变化
+                const baseRadius = 0.08 + Math.sin(t * Math.PI * 2) * 0.02;
+
+                // 节瘤效果 - 在某些位置添加半径增大
+                const nodeEffect = Math.sin(t * Math.PI * 8) * 0.03;
+                const radiusMultiplier = baseRadius + Math.max(0, nodeEffect);
+
+                // 应用到该段的所有顶点
+                for (let radialIndex = 0; radialIndex <= radialSegments; radialIndex++) {
+                    const vertexIndex = segmentIndex * (radialSegments + 1) + radialIndex;
+                    const posIndex = vertexIndex * 3;
+
+                    if (posIndex < positions.length) {
+                        const x = positions[posIndex];
+                        const z = positions[posIndex + 2];
+                        const distance = Math.sqrt(x * x + z * z);
+
+                        if (distance > 0) {
+                            // 按比例缩放顶点到新的半径
+                            const scale = radiusMultiplier / distance;
+                            positions[posIndex] *= scale;
+                            positions[posIndex + 2] *= scale;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ===================== 应用顶点变形（扭曲+肿瘤）=====================
+        function applyVertexDeformations(geometry, segments, twistStrength, random) {
+            const positions = geometry.attributes.position.array;
+
+            for (let i = 0; i < positions.length; i += 3) {
+                const vertexIndex = Math.floor(i / 3);
+                const radialIndex = vertexIndex % (geometry.parameters.radialSegments + 1);
+                const segmentIndex = Math.floor(vertexIndex / (geometry.parameters.radialSegments + 1));
+                const t = segmentIndex / segments;
+
+                // 基础螺旋扭曲
+                const twist = Math.sin(t * Math.PI * 2 + radialIndex * 0.5) * twistStrength;
+
+                // 肿瘤/瘤状变化 - 在随机位置添加凸起
+                const tumorSeed = (segmentIndex * 7 + radialIndex * 13) % 100;
+                const tumorFactor = Math.sin(tumorSeed * 0.1) * Math.cos(tumorSeed * 0.15);
+                const tumorStrength = Math.max(0, tumorFactor) * 0.15; // 较小的肿瘤效果
+
+                // 应用变换
+                positions[i] += twist * 0.25 + tumorStrength * 0.1;     // X方向
+                positions[i + 1] += twist * 0.08 + tumorStrength * 0.08; // Y方向
+                positions[i + 2] += Math.sin(t * Math.PI) * twistStrength * 0.15 + tumorStrength * 0.05; // Z方向
+            }
+
+            geometry.attributes.position.needsUpdate = true;
+            geometry.computeVertexNormals();
+        }
+
+        // ===================== 添加表面噪声 =====================
+        function addSurfaceNoise(geometry, random) {
+            const positions = geometry.attributes.position.array;
+            const normals = geometry.attributes.normal.array;
+
+            for (let i = 0; i < positions.length; i += 3) {
+                const vertexIndex = Math.floor(i / 3);
+
+                // 使用顶点索引生成伪随机噪声
+                const noise1 = Math.sin(vertexIndex * 0.12) * Math.cos(vertexIndex * 0.18);
+                const noise2 = Math.sin(vertexIndex * 0.27) * Math.cos(vertexIndex * 0.36);
+                const noise3 = Math.sin(vertexIndex * 0.52) * Math.cos(vertexIndex * 0.61);
+
+                // 沿法线方向添加小的位移
+                const normalX = normals[i];
+                const normalY = normals[i + 1];
+                const normalZ = normals[i + 2];
+
+                const noiseStrength = 0.015;
+                positions[i] += normalX * noise1 * noiseStrength;
+                positions[i + 1] += normalY * noise2 * noiseStrength;
+                positions[i + 2] += normalZ * noise3 * noiseStrength;
+            }
+        }
+
+        // ===================== 创建树皮材质 =====================
+        function createVariedBarkMaterial(random) {
+            // 基础棕褐色
+            const baseR = 0x8B / 255; // 139
+            const baseG = 0x45 / 255; // 69
+            const baseB = 0x13 / 255; // 19
+
+            // 小的颜色变化（±15%）
+            const colorVariation = 0.15;
+            const r = baseR * (1 + random(-colorVariation, colorVariation));
+            const g = baseG * (1 + random(-colorVariation, colorVariation));
+            const b = baseB * (1 + random(-colorVariation, colorVariation));
+
+            // 确保颜色在合理范围内
+            const clampedR = Math.max(0.3, Math.min(0.9, r));
+            const clampedG = Math.max(0.2, Math.min(0.7, g));
+            const clampedB = Math.max(0.05, Math.min(0.4, b));
+
+            const color = new THREE.Color(clampedR, clampedG, clampedB);
+
+            return new THREE.MeshStandardMaterial({
+                color: color,
+                roughness: 0.85 + random(0, 0.1),
+                metalness: random(0, 0.05)
+            });
+        }
+
+        // ===================== 添加不规则小分支 =====================
+        function addIrregularBranches(mainBranch, start, end, segments, random) {
+            const branchCount = Math.floor(random(0, 3)); // 0-2个分支
+
+            for (let i = 0; i < branchCount; i++) {
+                const branchSegment = Math.floor(random(1, segments - 1));
+                const t = branchSegment / segments;
+
+                // 分支起点位置
+                const branchStart = new THREE.Vector3().lerpVectors(start, end, t);
+
+                // 分支方向 - 随机角度
+                const branchAngle = random(0, Math.PI * 2);
+                const branchLength = 0.6 + random(0, 0.8);
+                const branchDirection = new THREE.Vector3(
+                    Math.cos(branchAngle) * branchLength,
+                    random(-0.3, 0.5) * branchLength,
+                    Math.sin(branchAngle) * branchLength
+                );
+
+                const branchEnd = branchStart.clone().add(branchDirection);
+
+                // 创建小分支（更简单的几何体）
+                const subGeometry = new THREE.CylinderGeometry(
+                    0.03 + random(0, 0.02), 0.02 + random(0, 0.01),
+                    branchLength, 4, 3, false
+                );
+
+                // 简单的扭曲
+                const subPositions = subGeometry.attributes.position.array;
+                for (let j = 0; j < subPositions.length; j += 3) {
+                    const vertexIdx = Math.floor(j / 3);
+                    const segmentIdx = Math.floor(vertexIdx / 5);
+                    const subT = segmentIdx / 3;
+                    const subTwist = Math.sin(subT * Math.PI) * 0.1;
+                    subPositions[j] += subTwist * 0.05;
+                }
+                subGeometry.attributes.position.needsUpdate = true;
+                subGeometry.computeVertexNormals();
+
+                const subMaterial = createVariedBarkMaterial(random);
+                const subBranch = new THREE.Mesh(subGeometry, subMaterial);
+
+                // 定位分支
+                const subMidPoint = new THREE.Vector3().lerpVectors(branchStart, branchEnd, 0.5);
+                subBranch.position.copy(subMidPoint);
+                subBranch.lookAt(branchEnd);
+                subBranch.rotateX(Math.PI / 2);
+
+                scene.add(subBranch);
+            }
+        }
+
+
+
+
+
+        // ===================== 初始化后处理（灰白色雾气）=====================
+        function initPostProcessing() {
+            console.log('Initializing custom fog post-processing...');
+
+            // 创建后处理合成器
+            composer = new EffectComposer(renderer);
+
+            // 添加场景渲染通道
+            const renderPass = new RenderPass(scene, camera);
+            composer.addPass(renderPass);
+
+            // 创建自定义雾气着色器（参考 webgpu_custom_fog_background）
+            const fogShader = {
+                uniforms: {
+                    tDiffuse: { value: null },
+                    fogColor: { value: new THREE.Color(0xf5f5f5) }, // 更柔和的灰白色雾气
+                    fogNear: { value: 3.0 }, // 雾气起始距离
+                    fogFar: { value: 12.0 }  // 雾气结束距离
+                },
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform sampler2D tDiffuse;
+                    uniform vec3 fogColor;
+                    uniform float fogNear;
+                    uniform float fogFar;
+                    varying vec2 vUv;
+
+                    void main() {
+                        vec4 texColor = texture2D(tDiffuse, vUv);
+
+                        // 计算线性深度（参考 webgpu_custom_fog_background 的 rangeFogFactor）
+                        float depth = gl_FragCoord.z / gl_FragCoord.w;
+
+                        // 将深度转换为线性雾气因子
+                        // fogNear 到 fogFar 范围内的线性过渡
+                        float fogFactor = clamp((depth - fogNear) / (fogFar - fogNear), 0.0, 1.0);
+
+                        // 使用 smoothstep 创建更平滑的过渡
+                        fogFactor = smoothstep(0.0, 1.0, fogFactor);
+
+                        // 混合场景颜色和雾气颜色
+                        gl_FragColor = mix(texColor, vec4(fogColor, texColor.a), fogFactor);
+                    }
+                `
+            };
+
+            // 创建雾气后处理通道
+            fogPass = new ShaderPass(fogShader);
+            composer.addPass(fogPass);
+
+            console.log('Custom fog post-processing initialized');
+        }
+
+        // ===================== 显示错误信息 =====================
+        function showError(message) {
+            loading.className = 'error';
+            loading.innerHTML = message;
+            }
+
+
+        // ===================== 窗口自适应 =====================
+        function onWindowResize() {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            if (composer) {
+                composer.setSize(window.innerWidth, window.innerHeight);
+            }
+        }
+
+        // ===================== 动画循环 =====================
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 更新控制器
+            if (controls) {
+                controls.update();
+            }
+
+            // 使用后处理渲染（包含雾气效果）
+            if (composer) {
+                composer.render();
+            } else {
+            renderer.render(scene, camera);
+        }
+        }
+
+        // ===================== 生成90根延长树枝 =====================
+        function createExtendedBranches() {
+            console.log('Creating 90 extended branches...');
+
+            // 首先创建原来的树枝作为基准
+            const baseSeed = Math.random();
+            createStaticTwistedBranch(baseSeed, 2); // 原树枝延长1倍
+
+            // 生成89根额外树枝，与基准树枝基本平行但角度微变
+            const branchCount = 89;
+            const spacing = 2; // 树枝间距
+
+            for (let i = 0; i < branchCount; i++) {
+                // 计算位置偏移
+                const angle = (i / branchCount) * Math.PI * 2; // 均匀分布在圆周上
+                const radius = 8 + Math.random() * 12; // 8-20单位的半径范围
+                const x = Math.cos(angle) * radius;
+                const z = Math.sin(angle) * radius;
+
+                // 创建新的树枝位置
+                const branchSeed = baseSeed + i * 0.1; // 基于基准种子但有所变化
+                createExtendedBranchAt(x, z, branchSeed);
+            }
+
+            console.log('89 extended branches created');
+        }
+
+        // ===================== 在指定位置创建延长树枝 =====================
+        function createExtendedBranchAt(x, z, seed) {
+            // 种子随机函数
+            const random = (min, max) => {
+                const x = Math.sin(seed * 10000 + min * 1000) * 10000;
+                return min + (max - min) * (x - Math.floor(x));
+            };
+
+            // 基础参数（与原函数相同但延长1倍）
+            const baseLength = 4.5 + random(0, 2);
+            const length = baseLength * 2; // 延长1倍
+            const curveAmount = random(0.3, 0.8);
+            const angleVariation = random(-0.2, 0.2); // 角度微变
+            const endX = random(-0.8, 0.8) * length * curveAmount + angleVariation;
+            const endZ = -length * (0.7 + random(0, 0.6));
+
+            const start = new THREE.Vector3(x, 0, z);
+            const end = new THREE.Vector3(x + endX, length, z + endZ);
+
+            // 计算几何参数
+            const direction = new THREE.Vector3().subVectors(end, start);
+            const actualLength = direction.length();
+            const segments = 7 + Math.floor(random(0, 4));
+            const twistStrength = 0.5 + random(0, 0.6);
+            const baseRadius = 0.1 + random(0, 0.06);
+
+            // 创建几何体
+            const geometry = new THREE.CylinderGeometry(
+                baseRadius * (0.7 + random(0, 0.3)),
+                baseRadius * (1.0 + random(0, 0.4)),
+                actualLength, 8, segments, false
+            );
+
+            // 应用变形效果
+            applyRadiusVariations(geometry, segments, random);
+            applyVertexDeformations(geometry, segments, twistStrength, random);
+            addSurfaceNoise(geometry, random);
+
+            // 创建材质
+            const material = createVariedBarkMaterial(random);
+
+            // 创建网格
+            const branch = new THREE.Mesh(geometry, material);
+
+            // 定位到中点并朝向末端
+            const midPoint = new THREE.Vector3().lerpVectors(start, end, 0.5);
+            branch.position.copy(midPoint);
+            branch.lookAt(end);
+            branch.rotateX(Math.PI / 2);
+
+            scene.add(branch);
+
+            // 添加不规则小分支
+            addIrregularBranches(branch, start, end, segments, random);
+        }
+
+        // ===================== 初始化入口 =====================
+        async function init() {
+            try {
+                console.log('Starting initialization...');
+
+                loading.textContent = '初始化核心组件...';
+                initCore();
+
+                loading.textContent = '设置光照...';
+            initLight();
+
+
+
+                loading.textContent = '创建雾气效果...';
+                // 使用简单的指数雾气而不是复杂的深度雾气
+                scene.fog = new THREE.FogExp2(0xddddff, 0.005); // 恢复简单雾气
+
+                loading.textContent = '生成树枝...';
+                // 生成30根延长1倍的树枝，与原来树枝基本平行但角度微变
+                createExtendedBranches();
+
+
+                // 监听窗口大小变化
+                window.addEventListener('resize', onWindowResize);
+
+                // 隐藏加载提示
+                loading.style.display = 'none';
+
+                console.log('Initialization complete, starting animation...');
+
+                // 启动动画
+            animate();
+
+            } catch (error) {
+                console.error('初始化失败：', error);
+                showError('初始化失败: ' + error.message + '<br>请刷新页面重试');
+            }
+        }
+
+        // 启动程序
+        init();
+    </script>
+</body>
+</html>

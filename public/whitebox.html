@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Bird Preview</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        canvas {
+            width: 100% !important;
+            height: 100% !important;
+            display: block !important;
+        }
+
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 100;
+        }
+
+        #loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 10px;
+            font-size: 16px;
+            z-index: 1000;
+        }
+
+        #cameraPanel {
+            position: absolute;
+            top: 60px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.8);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-family: monospace;
+            display: none;
+            z-index: 200;
+            min-width: 200px;
+        }
+
+    </style>
+</head>
+<body>
+    <div id="info">
+        <strong>Super Bird Preview</strong><br>
+        <small>Supports compressed GLB files (Meshopt + WebP)</small><br><br>
+        Left click drag to rotate, right click drag to pan, scroll wheel to zoom
+    </div>
+
+    <div id="loading">Loading model...</div>
+
+    <div id="cameraPanel">
+        <strong>Camera Position Info</strong><br>
+        <div id="cameraInfo">Press '2' to show/hide this panel</div>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "../three.js-dev/build/three.module.js",
+            "three/addons/": "../three.js-dev/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from './src/controls/OrbitControls.js';
+        import { GLTFLoader } from './src/loaders/GLTFLoader.js';
+        import { MeshoptDecoder } from './src/loaders/meshopt_decoder.module.js';
+        import { HDRLoader } from './src/loaders/HDRLoader.js';
+
+        let camera, scene, renderer, controls;
+        let bellyModel = null;
+        let sphereModel = null;
+        let ambientLight, keyLight, fillLight, spotLight;
+        let renderTarget = null;
+        let postProcessingMaterial = null;
+
+        // Configure GLTF loader for compressed GLB files
+        // Supports EXT_meshopt_compression, EXT_texture_webp, KHR_mesh_quantization
+        let gltfLoader = new GLTFLoader();
+        gltfLoader.setMeshoptDecoder(MeshoptDecoder);
+
+        init();
+        animate();
+
+        function init() {
+            // GLTF loader is already configured at the top level
+            // Supports EXT_meshopt_compression, EXT_texture_webp, KHR_mesh_quantization
+
+            THREE.Cache.enabled = true; // Enable cache for better performance
+
+            // Create scene
+            scene = new THREE.Scene();
+
+            // Create camera
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(5.40, -0.09, 11.61);
+            camera.lookAt(0, 0, 0);
+
+            // Create renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.0; // Base exposure set to 1.0, post-processing controls final exposure
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+            console.log('Initial exposure value:', renderer.toneMappingExposure);
+            document.body.appendChild(renderer.domElement);
+
+            // Create render target for post-processing
+            renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
+                format: THREE.RGBAFormat,
+                type: THREE.UnsignedByteType,
+                encoding: THREE.sRGBEncoding
+            });
+
+            // Create post-processing material
+            const postProcessingShader = {
+                uniforms: {
+                    tDiffuse: { value: null },
+                    brightness: { value: 0.12 },
+                    contrast: { value: 0.95},
+                    saturation: { value: 1.05 },
+                    exposure: { value: 0.85 },
+                    colorBalance: { value: new THREE.Vector3(1.05, 1.0, 0.95) } // RGB color balance: increase red, keep green, decrease blue
+                },
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform sampler2D tDiffuse;
+                    uniform float brightness;
+                    uniform float contrast;
+                    uniform float saturation;
+                    uniform float exposure;
+                    uniform vec3 colorBalance;
+                    varying vec2 vUv;
+
+                    void main() {
+                        vec4 color = texture2D(tDiffuse, vUv);
+
+                        // Exposure adjustment
+                        color.rgb *= exposure;
+
+                        // Color balance adjustment (neutralize bluish tint)
+                        color.r *= colorBalance.r; // Increase red
+                        color.g *= colorBalance.g; // Keep green
+                        color.b *= colorBalance.b; // Decrease blue
+
+                        // Brightness adjustment
+                        color.rgb += brightness;
+
+                        // Contrast adjustment
+                        color.rgb = (color.rgb - 0.5) * contrast + 0.5;
+
+                        // Saturation adjustment
+                        float luminance = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+                        color.rgb = mix(vec3(luminance), color.rgb, saturation);
+
+                        gl_FragColor = color;
+                    }
+                `
+            };
+
+            postProcessingMaterial = new THREE.ShaderMaterial(postProcessingShader);
+
+            // Create fullscreen quad
+            const geometry = new THREE.PlaneGeometry(2, 2);
+            const mesh = new THREE.Mesh(geometry, postProcessingMaterial);
+            const scenePostProcessing = new THREE.Scene();
+            scenePostProcessing.add(mesh);
+
+            // Store post-processing scene
+            window.scenePostProcessing = scenePostProcessing;
+            window.postProcessingCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+            // Create controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.enableZoom = true;
+            controls.enableRotate = true;
+            controls.enablePan = true;
+            controls.minDistance = 3;
+            controls.maxDistance = 20;
+            controls.maxPolarAngle = Math.PI;
+
+            // Set controls target point (camera look-at point)
+            controls.target.set(0, 0, 0);
+            controls.update();
+
+            // Load HDR environment
+            const hdrLoader = new HDRLoader();
+            hdrLoader.load('./hdr/whitebox.hdr', (hdrTexture) => {
+                hdrTexture.mapping = THREE.EquirectangularReflectionMapping;
+
+                // Set background and environment
+                scene.background = hdrTexture;
+
+                // 创建PMREM环境贴图用于材质照明
+                const pmremGenerator = new THREE.PMREMGenerator(renderer);
+                pmremGenerator.compileEquirectangularShader();
+                const envMap = pmremGenerator.fromEquirectangular(hdrTexture).texture;
+                scene.environment = envMap;
+
+                console.log('HDR环境加载完成');
+
+                // 检查是否有保存的超级组合体预览数据
+                const savedPreview = localStorage.getItem('superAssemblyPreview');
+                if (savedPreview) {
+                    try {
+                        const previewData = JSON.parse(savedPreview);
+                        console.log('发现保存的超级组合体预览数据:', previewData);
+                        loadSuperAssemblyPreview(previewData);
+                    } catch (error) {
+                        console.warn('解析保存的预览数据失败:', error);
+                        // 显示错误信息
+                        showNoPreviewMessage('Preview data parsing failed, please recreate super assembly');
+                    }
+                } else {
+                    // 没有保存数据，显示提示信息
+                    showNoPreviewMessage('No saved super assembly preview data, please create and save in main app');
+                }
+
+            }, (progress) => {
+                console.log('HDR加载进度:', progress);
+            }, (error) => {
+                console.warn('HDR加载失败，使用默认背景:', error);
+                scene.background = new THREE.Color(0x333333);
+            });
+
+            // 添加光照系统
+            setupLighting();
+
+            // 添加按键监听
+            window.addEventListener('keydown', onKeyDown);
+
+            // 窗口大小调整
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function showNoPreviewMessage(message) {
+            // 更新信息显示
+            const infoDiv = document.getElementById('info');
+            infoDiv.innerHTML = `
+                <strong>Super Assembly Preview</strong><br>
+                ${message}<br>
+                <button onclick="window.close()" style="margin-top: 8px; padding: 4px 8px; font-size: 11px; background: #4ecdc4; color: white; border: none; border-radius: 3px; cursor: pointer;">Close Window</button>
+            `;
+
+            // 隐藏加载提示
+            const loadingDiv = document.getElementById('loading');
+            if (loadingDiv) {
+                loadingDiv.style.display = 'none';
+            }
+
+            // 渲染一次空的场景
+            render();
+        }
+
+
+        function setupLighting() {
+            // 环境光 - 室内白炽灯暖色调
+            ambientLight = new THREE.AmbientLight(0xFFF4E5, 0.6);
+            scene.add(ambientLight);
+
+            // 主关键光 - 室内白炽灯暖色调
+            keyLight = new THREE.DirectionalLight(0xFFF4E5, 1);
+            keyLight.position.set(5, 10, 5);
+            keyLight.castShadow = true;
+            keyLight.shadow.mapSize.set(2048, 2048);
+            keyLight.shadow.radius = 4;
+            keyLight.shadow.camera.near = 0.1;
+            keyLight.shadow.camera.far = 50;
+            keyLight.shadow.camera.left = -15;
+            keyLight.shadow.camera.right = 15;
+            keyLight.shadow.camera.top = 15;
+            keyLight.shadow.camera.bottom = -15;
+            scene.add(keyLight);
+
+            // 填充光 - 室内白炽灯暖色调
+            fillLight = new THREE.HemisphereLight(0xFFF4E5, 0xD4B08A, 0.15);
+            scene.add(fillLight);
+
+            // 聚光灯 - 室内白炽灯暖色调
+            spotLight = new THREE.SpotLight(0xFFF4E5, 20.0);
+            spotLight.position.set(4, 10, 0); // 上方中心位置
+            spotLight.target.position.set(0, 0, 0); // 瞄准belly模型中心
+            spotLight.angle = Math.PI / 11; // 缩小到22.5度锥角，更聚焦
+            spotLight.penumbra = 0.05; // 减小边缘柔和度，产生更锐利的边界
+            spotLight.decay = 1; // 减小衰减，让光更均匀
+            spotLight.distance = 30; // 缩短有效距离
+            spotLight.castShadow = true;
+            spotLight.shadow.mapSize.width = 2048;
+            spotLight.shadow.mapSize.height = 2048;
+            spotLight.shadow.camera.near = 1;
+            spotLight.shadow.camera.far = 20;
+            spotLight.shadow.bias = -0.0001;
+            scene.add(spotLight);
+            scene.add(spotLight.target); // 必须添加target到场景
+        }
+
+        function onKeyDown(event) {
+            if (event.key === '2') {
+                const panel = document.getElementById('cameraPanel');
+                panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+            }
+        }
+
+        function createSpherePreview() {
+            // 创建球体几何体
+            const sphereGeometry = new THREE.SphereGeometry(0.5, 32, 32);
+            const sphereMaterial = new THREE.MeshStandardMaterial({
+                color: 0xFFFFFF,
+                roughness: 0.1,
+                metalness: 0.9
+            });
+
+            sphereModel = new THREE.Mesh(sphereGeometry, sphereMaterial);
+            sphereModel.position.set(-3, 0, 0); // 放在belly模型左侧
+            sphereModel.castShadow = true;
+            sphereModel.receiveShadow = true;
+
+            scene.add(sphereModel);
+            console.log('球体预览模型已创建');
+        }
+
+
+
+
+
+
+        // 自动居中和放大装配体
+        function centerAndScaleAssembly() {
+            // 获取场景中所有的模型对象（排除灯光和相机）
+            const models = [];
+            scene.traverse((child) => {
+                if (child.isMesh && child.userData.partType) {
+                    models.push(child);
+                }
+            });
+
+            if (models.length === 0) return;
+
+            // 计算整个装配体的包围盒
+            const box = new THREE.Box3();
+            models.forEach(model => {
+                const modelBox = new THREE.Box3().setFromObject(model);
+                box.union(modelBox);
+            });
+
+            // 获取包围盒的中心点
+            const center = new THREE.Vector3();
+            box.getCenter(center);
+
+            // 计算包围盒的大小
+            const size = new THREE.Vector3();
+            box.getSize(size);
+            const maxDimension = Math.max(size.x, size.y, size.z);
+
+            // 计算缩放比例（1.5倍放大）
+            const scaleFactor = 1.5;
+
+            // 将所有模型移动到中心并应用缩放
+            models.forEach(model => {
+                // 移动到中心（相对于包围盒中心）
+                model.position.sub(center);
+                // 应用缩放
+                model.scale.multiplyScalar(scaleFactor);
+            });
+
+            console.log(`装配体已居中并放大${scaleFactor}倍，中心点: (${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)})`);
+        }
+
+        function loadSuperAssemblyPreview(previewData) {
+            const components = previewData.components;
+            console.log('开始加载超级组合体预览，包含', components.length, '个组件');
+
+            let loadedCount = 0;
+            let failedCount = 0;
+            const totalCount = components.length;
+
+            // 更新加载信息
+            const infoDiv = document.getElementById('info');
+            infoDiv.innerHTML = `
+                <strong>Super Assembly Preview</strong><br>
+                Loading ${totalCount} components from saved data...<br>
+                <span id="loadProgress">0 / ${totalCount}</span>
+            `;
+
+            // 为每个组件加载模型
+            components.forEach((componentData, index) => {
+                gltfLoader.load(componentData.filePath, function(gltf) {
+                    const model = gltf.scene;
+
+                    // 应用保存的变换
+                    model.position.fromArray(componentData.position);
+                    model.rotation.fromArray(componentData.rotation);
+                    model.scale.fromArray(componentData.scale);
+
+                    // 设置组件元数据
+                    model.userData.partType = componentData.partType;
+                    model.userData.fileName = componentData.fileName;
+
+                    // 处理材质 - 保留原始贴图并应用PBR设置
+                    model.traverse((child) => {
+                        if (child.isMesh && child.material) {
+                            const materials = Array.isArray(child.material) ? child.material : [child.material];
+                            const newMaterials = [];
+
+                            materials.forEach(material => {
+                                try {
+                                    if (!(material instanceof THREE.MeshStandardMaterial)) {
+                                        const newMaterial = new THREE.MeshStandardMaterial();
+
+                                        // 完整复制原有材质的所有属性
+                                        Object.keys(material).forEach(key => {
+                                            if (key !== 'type' && key !== 'isMaterial' && typeof material[key] !== 'function') {
+                                                try {
+                                                    newMaterial[key] = material[key];
+                                                } catch (e) {
+                                                    // 忽略无法复制的属性
+                                                }
+                                            }
+                                        });
+
+                                        // 确保PBR属性正确设置
+                                        if (typeof newMaterial.roughness !== 'number') {
+                                            newMaterial.roughness = 0.2;
+                                        }
+                                        if (typeof newMaterial.metalness !== 'number') {
+                                            newMaterial.metalness = 0.6;
+                                        }
+
+                                        newMaterials.push(newMaterial);
+                                    } else {
+                                        // 已经是MeshStandardMaterial，确保PBR属性正确
+                                        if (typeof material.roughness !== 'number') {
+                                            material.roughness = 0.2;
+                                        }
+                                        if (typeof material.metalness !== 'number') {
+                                            material.metalness = 0.6;
+                                        }
+                                        newMaterials.push(material);
+                                    }
+                                } catch (error) {
+                                    console.warn('材质处理失败，使用默认材质:', error);
+                                    newMaterials.push(new THREE.MeshStandardMaterial({
+                                        color: 0x888888,
+                                        roughness: 0.2,
+                                        metalness: 0.6
+                                    }));
+                                }
+                            });
+
+                            child.material = newMaterials.length === 1 ? newMaterials[0] : newMaterials;
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                        }
+                    });
+
+                    // 添加到场景
+                    scene.add(model);
+                    loadedCount++;
+
+                    // 更新进度
+                    document.getElementById('loadProgress').textContent = `${loadedCount} / ${totalCount}`;
+
+                    console.log(`成功加载组件 ${index + 1}/${totalCount}: ${componentData.fileName}`);
+
+                    // 检查是否所有组件都加载完成
+                    if (loadedCount + failedCount === totalCount) {
+                        finishLoading(loadedCount, failedCount, totalCount);
+                    }
+
+                }, (progress) => {
+                    // 单个组件的加载进度
+                    console.log(`加载进度 ${componentData.fileName}:`, progress);
+                }, function(error) {
+                    console.error(`加载组件失败 ${componentData.filePath}:`, error);
+                    failedCount++;
+
+                    // 更新进度
+                    document.getElementById('loadProgress').textContent = `${loadedCount} / ${totalCount}`;
+
+                    // 检查是否所有组件都加载完成
+                    if (loadedCount + failedCount === totalCount) {
+                        finishLoading(loadedCount, failedCount, totalCount);
+                    }
+                });
+            });
+
+            function finishLoading(loaded, failed, total) {
+                const infoDiv = document.getElementById('info');
+                infoDiv.innerHTML = `
+                    <strong>Super Assembly Preview</strong><br>
+                    Load complete: ${loaded} success, ${failed} failed<br>
+                    Total ${total} components<br>
+                    Press '2' to show camera info<br>
+                    <button id="clearPreviewBtn" style="margin-top: 8px; padding: 4px 8px; font-size: 11px; background: #ff6b6b; color: white; border: none; border-radius: 3px; cursor: pointer;">Clear Saved Preview</button>
+                `;
+
+                if (failed > 0) {
+                    infoDiv.innerHTML += `<br><span style="color: #ff6b6b;">${failed} components failed to load, check console</span>`;
+                }
+
+                // 添加清除按钮的事件监听
+                setTimeout(() => {
+                    const clearBtn = document.getElementById('clearPreviewBtn');
+                    if (clearBtn) {
+                        clearBtn.addEventListener('click', function() {
+                            localStorage.removeItem('superAssemblyPreview');
+                            infoDiv.innerHTML = `
+                                <strong>Super Assembly Preview</strong><br>
+                                Saved preview data cleared<br>
+                                <button onclick="location.reload()" style="margin-top: 8px; padding: 4px 8px; font-size: 11px; background: #4ecdc4; color: white; border: none; border-radius: 3px; cursor: pointer;">Reload Page</button>
+                            `;
+                        });
+                    }
+                }, 100);
+
+                // 自动居中和放大模型
+                if (loaded > 0) {
+                    centerAndScaleAssembly();
+                }
+
+                // 隐藏加载提示
+                const loadingDiv = document.getElementById('loading');
+                if (loadingDiv) {
+                    loadingDiv.style.display = 'none';
+                }
+
+                render();
+            }
+        }
+
+        function loadBellyModel() {
+            gltfLoader.load('./models/bird_components/belly/belly (271).glb', function(gltf) {
+                bellyModel = gltf.scene;
+
+                // 放大2倍
+                bellyModel.scale.set(2, 2, 2);
+
+                // 放在场景中心
+                bellyModel.position.set(0, 0, 0);
+
+                // 处理材质
+                bellyModel.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        const materials = Array.isArray(child.material) ? child.material : [child.material];
+                        const newMaterials = [];
+
+                        materials.forEach(material => {
+                            try {
+                                if (!(material instanceof THREE.MeshStandardMaterial)) {
+                                    const newMaterial = new THREE.MeshStandardMaterial();
+                                    if (material.color && material.color.isColor) {
+                                        newMaterial.color.copy(material.color);
+                                    } else {
+                                        newMaterial.color.setHex(0x888888);
+                                    }
+                                    if (material.map) newMaterial.map = material.map;
+                                    if (material.normalMap) newMaterial.normalMap = material.normalMap;
+                                    if (material.roughnessMap) newMaterial.roughnessMap = material.roughnessMap;
+                                    if (material.metalnessMap) newMaterial.metalnessMap = material.metalnessMap;
+
+                                    // 设置PBR属性
+                                    newMaterial.roughness = 0.1;
+                                    newMaterial.metalness = 0.9;
+
+                                    newMaterials.push(newMaterial);
+                                } else {
+                                    newMaterials.push(material);
+                                }
+                            } catch (error) {
+                                console.warn('材质处理失败，使用默认材质:', error);
+                                newMaterials.push(new THREE.MeshStandardMaterial({
+                                    color: 0x888888,
+                                    roughness: 0.1,
+                                    metalness: 0.9
+                                }));
+                            }
+                        });
+
+                        child.material = newMaterials.length === 1 ? newMaterials[0] : newMaterials;
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                    }
+                });
+
+                // 添加到场景
+                scene.add(bellyModel);
+
+                // 自动居中和放大模型
+                centerAndScaleAssembly();
+
+                console.log('Belly (271) 模型加载完成，已居中并放大1.5倍');
+
+                // 更新信息显示
+                const infoDiv = document.getElementById('info');
+                infoDiv.innerHTML = `
+                    <strong>默认预览模式</strong><br>
+                    Belly (271).glb - 已居中放大<br>
+                    鼠标拖拽旋转，滚轮缩放<br>
+                    按 '2' 键显示镜头信息
+                `;
+
+                // 隐藏加载提示
+                const loadingDiv = document.getElementById('loading');
+                if (loadingDiv) {
+                    loadingDiv.style.display = 'none';
+                }
+
+                render();
+
+            }, (progress) => {
+                console.log('模型加载进度:', progress);
+            }, function(error) {
+                console.error('加载belly模型失败:', error);
+                const loadingDiv = document.getElementById('loading');
+                if (loadingDiv) {
+                    loadingDiv.textContent = '加载失败: ' + error.message;
+                }
+            });
+        }
+
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            render();
+        }
+
+        function updateCameraInfo() {
+            if (camera) {
+                const position = camera.position;
+                const rotation = camera.rotation;
+
+                const cameraInfo = document.getElementById('cameraInfo');
+                if (cameraInfo) {
+                    cameraInfo.innerHTML = `
+                        <strong>位置 (Position):</strong><br>
+                        X: ${position.x.toFixed(2)}<br>
+                        Y: ${position.y.toFixed(2)}<br>
+                        Z: ${position.z.toFixed(2)}<br><br>
+                        <strong>旋转 (Rotation):</strong><br>
+                        X: ${(rotation.x * 180 / Math.PI).toFixed(1)}°<br>
+                        Y: ${(rotation.y * 180 / Math.PI).toFixed(1)}°<br>
+                        Z: ${(rotation.z * 180 / Math.PI).toFixed(1)}°<br><br>
+                        <strong>距离 (Distance):</strong><br>
+                        ${position.length().toFixed(2)}
+                    `;
+                }
+            }
+        }
+
+        function render() {
+            // 更新相机信息显示
+            updateCameraInfo();
+
+            if (renderer && renderTarget && postProcessingMaterial) {
+                // 第一遍渲染到纹理（应用tone mapping）
+                renderer.setRenderTarget(renderTarget);
+                renderer.render(scene, camera);
+
+                // 第二遍渲染后期处理效果
+                renderer.setRenderTarget(null);
+                postProcessingMaterial.uniforms.tDiffuse.value = renderTarget.texture;
+                renderer.render(window.scenePostProcessing, window.postProcessingCamera);
+            } else if (renderer) {
+                // 如果后期处理未准备好，直接渲染（应用tone mapping）
+                renderer.render(scene, camera);
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+            // 重新创建渲染目标
+            if (renderTarget) {
+                renderTarget.dispose();
+            }
+            renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
+
+            render();
+        }
+    </script>
+</body>
+</html>
