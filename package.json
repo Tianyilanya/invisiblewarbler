@@ -3,8 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "start": "webpack serve --mode development --open",
-    "build": "webpack --mode production"
+    "build": "NODE_OPTIONS='--max-old-space-size=4096' webpack --mode production",
+    "build:analyze": "NODE_OPTIONS='--max-old-space-size=4096' webpack --mode production --analyze",
+    "dev": "webpack serve --mode development --open"
   },
   "dependencies": {
     "three": "^0.157.0"

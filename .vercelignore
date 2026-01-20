@@ -1,0 +1,22 @@
+# 排除不必要的文件，减少构建时间
+src/
+docs/
+*.md
+three.js-dev/
+node_modules/
+*.bat
+test-*.html
+webgl_*.html
+analyze-glb.js
+compress-*.js
+cleanup-*.js
+optimize-*.js
+organize-models.js
+rename-models.js
+GLB_COMPRESSION_README.md
+LAUNCH_README.md
+public/scenetest*
+public/wird*.html
+public/whitebox.html
+public/super-bird-demo.html
+public/examples/
