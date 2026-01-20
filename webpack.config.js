@@ -1,7 +1,7 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
-// 添加静态文件复制插件
-const CopyPlugin = require('copy-webpack-plugin');
+// 暂时移除 CopyPlugin 导入
+// const CopyPlugin = require('copy-webpack-plugin');
 
 module.exports = {
   entry: './src/index.js',
@@ -29,7 +29,7 @@ module.exports = {
       // GLB/GLTF 文件完全排除，让它们作为静态文件
       {
         test: /\.(glb|gltf)$/i,
-        type: false, // 完全排除
+        use: 'null-loader', // 使用null-loader完全排除
       },
     ],
   },
@@ -37,26 +37,8 @@ module.exports = {
     new HtmlWebpackPlugin({
       template: 'public/index.html',
     }),
-    // 复制静态资源到 dist 目录
-    new CopyPlugin({
-      patterns: [
-        {
-          from: path.join(__dirname, 'public/models'),
-          to: 'models',
-          noErrorOnMissing: true,
-        },
-        {
-          from: path.join(__dirname, 'public/music'),
-          to: 'music',
-          noErrorOnMissing: true,
-        },
-        {
-          from: path.join(__dirname, 'public/hdr'),
-          to: 'hdr',
-          noErrorOnMissing: true,
-        },
-      ],
-    }),
+    // 暂时移除 CopyPlugin，先让项目能运行
+    // TODO: 重新添加静态文件复制功能
   ],
   devServer: {
     static: [
