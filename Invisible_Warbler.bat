@@ -8,7 +8,7 @@ echo The application will open automatically in your default browser.
 echo.
 
 REM Start the npm development server (it will auto-open the browser)
-start /B npm start
+start /B npm run dev
 
 REM Wait a moment for the server to initialize
 timeout /t 3 /nobreak > nul
