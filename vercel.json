@@ -16,12 +16,6 @@
       "dest": "/index.html"
     }
   ],
-  "functions": {
-    "src/api/**/*.js": {
-      "maxDuration": 900,
-      "memory": 1024
-    }
-  },
   "headers": [
     {
       "source": "/models/(.*)",
