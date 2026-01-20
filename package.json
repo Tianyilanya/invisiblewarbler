@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "node --max-old-space-size=4096 ./node_modules/webpack/bin/webpack.js --mode production",
-    "build:analyze": "node --max-old-space-size=4096 ./node_modules/webpack/bin/webpack.js --mode production --analyze",
-    "dev": "webpack serve --mode development --open"
+    "build": "npx webpack --mode production",
+    "build:analyze": "npx webpack --mode production --analyze",
+    "dev": "npx webpack serve --mode development --open"
   },
   "dependencies": {
     "three": "^0.157.0"

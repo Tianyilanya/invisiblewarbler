@@ -1,7 +1,6 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
-// 添加静态文件复制插件
-const CopyPlugin = require('copy-webpack-plugin');
+// Vercel 会自动处理 public 目录中的静态文件，无需复制
 
 module.exports = {
   entry: './src/index.js',
@@ -37,26 +36,7 @@ module.exports = {
     new HtmlWebpackPlugin({
       template: 'public/index.html',
     }),
-    // 复制静态资源到 dist 目录
-    new CopyPlugin({
-      patterns: [
-        {
-          from: path.join(__dirname, 'public/models'),
-          to: 'models',
-          noErrorOnMissing: true,
-        },
-        {
-          from: path.join(__dirname, 'public/music'),
-          to: 'music',
-          noErrorOnMissing: true,
-        },
-        {
-          from: path.join(__dirname, 'public/hdr'),
-          to: 'hdr',
-          noErrorOnMissing: true,
-        },
-      ],
-    }),
+    // Vercel 会自动处理 public 目录中的静态文件，无需手动复制
   ],
   devServer: {
     static: [
