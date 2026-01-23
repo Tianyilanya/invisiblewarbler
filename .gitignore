@@ -8,3 +8,5 @@ three.js-dev/
 .DS_Store
 .env
 .env.local
+.vercel
+.env*.local

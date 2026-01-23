@@ -1,29 +1,8 @@
 @echo off
 echo ========================================
-echo     Invisible Warbler - Art Project
+echo     Invisible Warbler - Art Project (old)
 echo ========================================
 echo.
-
-REM Check if build artifacts exist
-if not exist "dist\bundle.js" (
-    echo Build artifacts not found. Running build process...
-    echo.
-    npm run build
-    if errorlevel 1 (
-        echo.
-        echo Build failed! Please check the errors above.
-        echo.
-        pause
-        exit /b 1
-    )
-    echo.
-    echo Build completed successfully!
-    echo.
-) else (
-    echo Build artifacts found. Skipping build step.
-    echo.
-)
-
 echo Starting development server...
 echo The application will open automatically in your default browser.
 echo.

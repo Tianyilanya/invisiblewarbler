@@ -121,10 +121,10 @@ Viewer pages specifically designed for GLB bird component models.
 如果批处理文件无法正常工作，可以手动启动：
 ```bash
 # 安装依赖（仅首次运行）
-npm install
+npm run build
 
 # 启动开发服务器
-npm start
+npm run dev
 ```
 然后在浏览器中手动访问 http://localhost:8080
 
